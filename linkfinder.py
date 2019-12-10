@@ -4,6 +4,7 @@
 import requests
 import sys
 import re
+from urllib.parse import urlparse
 
 debug = True
 
@@ -15,12 +16,17 @@ def find_links(url):
         print("Target reachable. Proceeding to process HTML response")
 
     html = res.text
-    link_syntax = re.compile('<a.*href ?= ?\\"(\\S*)\\".*?>')
+    link_syntax = re.compile('<a.*href ?= ?\\"(\\S*)\\".*?>', re.IGNORECASE)
 
     links = re.findall(link_syntax, html)
-    return links
+    parsed = [urlparse(utemp) for utemp in links]
+    return parsed
 
 if __name__ == '__main__':
-    links_found = find_links('https://en.wikipedia.org/wiki/Sine_wave')
+    url = 'https://en.wikipedia.org/wiki/Sine_wave'
+    if len(sys.argv) == 2:
+        url = sys.argv[1]
+
+    links_found = find_links(url)
     for link in links_found:
         print(link)
