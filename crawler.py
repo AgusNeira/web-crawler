@@ -48,6 +48,7 @@ class Crawler(cmd.Cmd):
                 print('Couldn\'t read URL properly. Exiting crawler')
                 raise ValueError('Couldn\'t initialize manual crawler')
 
+        self.purl = urlparse(self.url)
         res = requests.get(self.url)
         if res.status_code != requests.codes.ok:
             print('I\'m sorry, but the target you chose isn\'t reachable')
@@ -57,18 +58,25 @@ class Crawler(cmd.Cmd):
         print('Type \'help\' for details')
         
         self.links = {}
+        self.keys = {}
 
     def do_links(self, args):
-        local, extern = True, True
+        local, extern, frags = False, False, False
         if args != '':
-            if args == 'local':
-                extern = False
-            elif args == 'extern':
-                local = False
+            largs = args.split(' ')
+            if 'local' in largs:
+                local = True
+            elif 'extern' in largs:
+                extern = True
+            elif 'fragments' in largs:
+                frags = True
             else:
                 print('links: option not recognized. Type \'help links\' to see usage.')
+        else:
+            local = True
+            extern = True
+            frags = True
             
-
         if self.url in self.links:
             print('There is data about the links of this URL already')
             yn = input('Do you want to analyze again? [y/N]: ').lower()
@@ -77,10 +85,8 @@ class Crawler(cmd.Cmd):
                 self.do_links(args)
             else:
                 self.do_show('links')
-
-        lurl = urlparse(self.url, scheme = 'http')
         
-        res = requests.get(lurl.geturl())
+        res = requests.get(self.url)
         html = res.text
         link_syntax = re.compile('<a.*href ?= ?[\\\'\\"]([^\\"\\\'\\s]*)[\\"\\\'].*?>', re.IGNORECASE)
 
@@ -89,44 +95,78 @@ class Crawler(cmd.Cmd):
         self.links[self.url] = {}
         if local: self.links[self.url]['local'] = []
         if extern: self.links[self.url]['extern'] = []
+        if frags: self.links[self.url]['fragments'] = []
 
         for link in links:
             if link == '#': continue
 
             parsed = urlparse(link, scheme = 'http')
-            complete_url(parsed, lurl)
+            parsed = complete_url(parsed, lurl)
 
-            if parsed.netloc == lurl.netloc:
-                if local: 
-                    self.links[self.url]["local"].append(parsed)
+            if parsed.netloc == self.purl.netloc:
+                if parsed.path == self.purl.path:
+                    if frags:
+                        self.links[self.url]['fragments'].append(parsed.geturl())
+                else:
+                    if local: 
+                        self.links[self.url]["local"].append(parsed.geturl())
             else:
                 if extern:
-                    self.links[self.url]["extern"].append(parsed)
+                    self.links[self.url]["extern"].append(parsed.geturl())
     def help_links(self):
         print('it searches for all of the links in the current site')
         print('to visualize them, see the \'show\' command')
         print('usage:')
-        print('\tlinks [local|extern]   --- searches for all links, only locals, or only extern ones')
+        print('\tlinks [local|extern|fragments] --- searches for all links, only locals, only extern ones or only fragments')
     
+    def do_keywords(self, args):
+        html = requests.get(self.url).text
+        tags_matcher = re.compile('<meta.*name ?= ?[\\\'\\"]keywords[\\\'\\"].*content ?= ?[\\\'\\"]([^\\\'\\"]*)[\\\'\\"].*>', re.IGNORECASE)
+
+        keys = re.findall(tags_matcher, html)
+        if self.url not in self.keys:
+            self.keys[self.url] = []
+        for keyset in keys:
+            keyset = keyset.replace(', ', ',')
+            keyset = keyset.lower()
+            lkeys = keyset.split(',')
+
+            self.keys[self.url] += lkeys
+
     def __print_links_local(self):
         try:
             print('There are %d local links in this site'%len(self.links[self.url]['local']))
             if len(self.links[self.url]['local']) != 0:
                 for index, local in enumerate(self.links[self.url]['local']):
-                    print(local.geturl())
+                    print('%d: %s' % (index, local))
                     if index % config['page-size'] == config['page-size'] - 1:
                         continiu = input('Show next %d? (X or Q to stop): ' % config['page-size']).lower()
                         if continiu == 'q' or continiu == 'x':
                             break
         except KeyError:
             print('There are no links associated to this site')
+
     def __print_links_extern(self):
         try:
             llinks = len(self.links[self.url]['extern'])
             print('There are %d extern links in this site'%llinks)
             if llinks != 0:
                 for index, extern in enumerate(self.links[self.url]['extern']):
-                    print('%d: %s' % (index, extern.geturl()))
+                    print('%d: %s' % (index, extern))
+                    if index % config['page-size'] == config['page-size'] - 1:
+                        continiu = input('Show next %d? (X or Q to stop): ' % config['page-size']).lower()
+                        if continiu == 'q' or continiu == 'x':
+                            break
+        except KeyError:
+            print('There are no links associated to this site')
+
+    def __print_links_fragments(self):
+        try:
+            llinks = len(self.links[self.url]['fragments'])
+            print('There are %d fragments in this site'%llinks)
+            if llinks != 0:
+                for index, frag in enumerate(self.links[self.url]['fragments']):
+                    print('%d: %s' % (index, frag))
                     if index % config['page-size'] == config['page-size'] - 1:
                         continiu = input('Show next %d? (X or Q to stop): ' % config['page-size']).lower()
                         if continiu == 'q' or continiu == 'x':
@@ -139,15 +179,26 @@ class Crawler(cmd.Cmd):
             print('On this site:')
             if self.url not in self.links:
                 print('\tLinks were not serched for')
-                return
-            if 'local' in self.links[self.url]:
-                print('\t%d local links were found' % len(self.links[self.url]['local']))
             else:
-                print('\tlocal links were not searched for')
-            if 'extern' in self.links[self.url]:
-                print('\t%d extern links were found' % len(self.links[self.url]['extern']))
+                if 'fragments' in self.links[self.url]:
+                    print('\t%d fragments were found' % len(self.links[self.url]['fragments']))
+                else:
+                    print('\tFragments were not searched for')
+
+                if 'local' in self.links[self.url]:
+                    print('\t%d local links were found' % len(self.links[self.url]['local']))
+                else:
+                    print('\tlocal links were not searched for')
+
+                if 'extern' in self.links[self.url]:
+                    print('\t%d extern links were found' % len(self.links[self.url]['extern']))
+                else:
+                    print('\textern links were not searched for')
+            print('')
+            if self.url not in self.keys:
+                print('\tKeywords were not searched for')
             else:
-                print('\textern links were not searched for')
+                print('\t%d keywords have been found' % len(self.keys[self.url]))
 
             return
 
@@ -161,12 +212,21 @@ class Crawler(cmd.Cmd):
                         self.__print_links_local()
                     elif largs[1] == 'extern':
                         self.__print_links_extern()
+                    elif largs[1] == 'fragments':
+                        self.__print_links_fragments()
                     else:
                         print('show: sub-command not found. Type \'help show\' to see usage')
                         return
                 else:
                     self.__print_links_local()
                     self.__print_links_extern()
+        elif largs[0] == 'keywords':
+            if self.url not in self.keys:
+                print('There are no keywords stored for this site')
+            else:
+                print('Keys found:')
+                for key in self.keys[self.url]:
+                    print('\t%s' % key)
         else:
             print('show: sub-command not found. Type \'help show\' to see usage')
 
@@ -179,23 +239,31 @@ class Crawler(cmd.Cmd):
 
     def do_delete(self, args):
         try:
-            if args == 'links':
-                yn = input('Do you really want to delete all the links of this site? [y|N]: ').lower()
+            largs = args.split(' ')
+            if largs[0] == 'links':
+                frags = 'fragments' in largs[1:]
+                local = 'local' in largs[1:]
+                extern = 'extern' in largs[1:]
+
+                if not extern and not local and not frags:
+                    extern = True
+                    local = True
+                    frags = True
+
+                yn = input('Do you really want to delete links of this site? [y|N]: ' % s).lower()
+
                 if yn == 'y':
-                    del self.links[self.url]
-            elif args == 'links local':
-                yn = input('Do you really want to delete all local links of this site [y|N]: ').lower()
-                if yn == 'y':
-                    del self.links[self.url]['local']
-            elif args == 'links extern':
-                yn = input('Do you really want to delete all extern links of this site [y|N]: ').lower()
-                if yn == 'y':
-                    del self.links[self.url]['extern']
-            if self.links.get(self.url, None) == {}:
-                del self.links[self.url]
+                    if extern: del self.links[self.url]['extern']
+                    if local: del self.links[self.url]['local']
+                    if frags: del self.links[self.url]['fragments']
+                    if self.links[self.url] == {}: del self.links[self.url]
+            
         except KeyError:
             print('Turns out there were no links to delete after all')
-
+    def help_delete(self):
+        print('removes part of the links temporarilly stored.')
+        print('usage:')
+        print('\tdelete links [local|extern|fragments] --- Deletes all the links, the local or the extern ones from the current site')
 
     def do_exit(self, args):
         return True
